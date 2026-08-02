@@ -3,66 +3,134 @@ import nodemailer from 'nodemailer';
 let cachedTransporter = null;
 
 /**
- * Creates and returns cached nodemailer transporter using environment configuration.
- * Throws explicit error if required environment variables are missing.
+ * Validates environment variables and returns sanitized SMTP configuration.
+ * Step 1, Step 2, Step 7, Step 8
  */
-const getTransporter = () => {
-  if (cachedTransporter) return cachedTransporter;
+const getSmtpConfig = () => {
+  let rawHost = (process.env.EMAIL_HOST || process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const rawPort = (process.env.EMAIL_PORT || process.env.SMTP_PORT || '465').toString().trim();
+  const rawUser = (process.env.EMAIL_USER || process.env.SMTP_USER || '').trim();
+  const rawPass = (process.env.EMAIL_PASS || process.env.SMTP_PASS || '').trim();
+  const rawFrom = (process.env.EMAIL_FROM || '').trim();
+  const rawAdminEmail = (process.env.ADMIN_EMAIL || '').trim();
 
-  const host = process.env.EMAIL_HOST || process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '465', 10);
-  const user = process.env.EMAIL_USER || process.env.SMTP_USER;
-  const pass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
-
+  // Step 2: Verify every required environment variable
   const missing = [];
-  if (!user) missing.push('EMAIL_USER / SMTP_USER');
-  if (!pass) missing.push('EMAIL_PASS / SMTP_PASS');
+  if (!rawHost) missing.push('EMAIL_HOST');
+  if (!rawPort) missing.push('EMAIL_PORT');
+  if (!rawUser) missing.push('EMAIL_USER');
+  if (!rawPass) missing.push('EMAIL_PASS');
+  if (!rawFrom) missing.push('EMAIL_FROM');
+  if (!rawAdminEmail) missing.push('ADMIN_EMAIL');
 
   if (missing.length > 0) {
-    console.error('❌ [SMTP CREDENTIALS MISSING] Missing required environment variables on host environment:');
-    missing.forEach((item) => console.error(`   - Missing: ${item}`));
+    console.error('❌ [SMTP CONFIG ERROR] Missing required environment variable(s):');
+    missing.forEach((varName) => console.error(`   - Missing: ${varName}`));
     throw new Error(`SMTP configuration error: Missing required environment variable(s): ${missing.join(', ')}`);
   }
 
-  // Log host, port, and authenticated user address (without password)
-  console.log('📧 [SMTP CONFIG INITIALIZED]');
-  console.log(`   Host: ${host}`);
-  console.log(`   Port: ${port}`);
-  console.log(`   Authenticated User: ${user}`);
-  console.log(`   Secure: ${port === 465}`);
+  // Step 7: Host normalization
+  // If host is an IP address (e.g. 74.125.24.109) or Gmail user, use 'smtp.gmail.com' for proper SNI / TLS validation
+  const isIpAddress = /^(\d{1,3}\.){3}\d{1,3}$/.test(rawHost);
+  let host = rawHost;
+  if (isIpAddress || rawUser.endsWith('@gmail.com')) {
+    if (isIpAddress) {
+      console.warn(`⚠️ [SMTP HOST WARN] Configured EMAIL_HOST '${rawHost}' is a static IP. Resolving to canonical 'smtp.gmail.com' for TLS SNI compatibility.`);
+    }
+    host = 'smtp.gmail.com';
+  }
 
-  cachedTransporter = nodemailer.createTransport({
+  const port = parseInt(rawPort, 10);
+  const secure = port === 465; // Port 465 -> secure: true, Port 587 -> secure: false
+
+  // Step 8: Strip whitespace from Gmail App Passwords (e.g., "kkdw mqxn isnk xiyv" -> "kkdwmpxnisnkxiyv")
+  const pass = rawPass.replace(/\s+/g, '');
+
+  return {
     host,
     port,
-    secure: port === 465,
-    pool: true,
-    maxConnections: 5,
-    maxMessages: 100,
-    family: 4, // Force IPv4 resolution to prevent IPv6 socket timeouts on Render/cloud hosts
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-    auth: { user, pass },
-    tls: {
-      rejectUnauthorized: false
-    }
-  });
-
-  return cachedTransporter;
+    secure,
+    user: rawUser,
+    pass,
+    from: rawFrom,
+    adminEmail: rawAdminEmail,
+  };
 };
 
 /**
- * Verifies the SMTP transport connection during server startup
+ * Step 1: Creates Nodemailer transporter object. Guaranteed to never silently return null.
+ */
+const getTransporter = (overridePort = null) => {
+  const config = getSmtpConfig();
+  const port = overridePort !== null ? overridePort : config.port;
+  const secure = port === 465;
+
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: port,
+    secure: secure,
+    auth: {
+      user: config.user,
+      pass: config.pass,
+    },
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100,
+    family: 4, // Force IPv4 to prevent IPv6 socket connection timeouts on cloud hosts like Render
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
+    tls: {
+      servername: config.host,
+      rejectUnauthorized: false,
+    },
+  });
+
+  if (!transporter) {
+    throw new Error('SMTP Error: Failed to initialize Nodemailer transporter object.');
+  }
+
+  return transporter;
+};
+
+/**
+ * Step 3 & Step 9: Verifies the SMTP transport connection during server startup
  */
 export const verifyEmailSetup = async () => {
   try {
-    const transporter = getTransporter();
-    console.log('🔍 [SMTP VERIFYING] Verifying SMTP transporter connection...');
-    await transporter.verify();
-    console.log('✅ [SMTP VERIFICATION SUCCESS] Connected to mail server successfully. Transporter is ready to send emails.');
-    return true;
+    const config = getSmtpConfig();
+    console.log('🔍 [SMTP VERIFYING] Testing connection to mail server...');
+    console.log(`   SMTP Host: ${config.host}`);
+    console.log(`   SMTP Port: ${config.port}`);
+    console.log(`   Secure: ${config.secure}`);
+    console.log(`   Authenticated Email: ${config.user}`);
+
+    let transporter;
+    try {
+      transporter = getTransporter();
+      await transporter.verify();
+      cachedTransporter = transporter;
+      console.log('✅ [SMTP VERIFICATION SUCCESS] Connected to mail server successfully. Transporter is ready.');
+      return true;
+    } catch (primaryErr) {
+      // Step 9: Outbound connectivity fallback (If port 465 fails due to cloud network blocks, retry on port 587)
+      if (config.port === 465) {
+        console.warn(`⚠️ [SMTP VERIFY WARN] Primary port 465 connection failed (${primaryErr.message}). Attempting fallback to port 587 (STARTTLS)...`);
+        try {
+          const fallbackTransporter = getTransporter(587);
+          await fallbackTransporter.verify();
+          cachedTransporter = fallbackTransporter;
+          console.log('✅ [SMTP FALLBACK SUCCESS] Connected to mail server successfully on fallback port 587 (STARTTLS).');
+          return true;
+        } catch (fallbackErr) {
+          throw primaryErr;
+        }
+      } else {
+        throw primaryErr;
+      }
+    }
   } catch (error) {
-    console.error('❌ [SMTP VERIFICATION FAILED] Transporter failed verification during server startup:');
+    console.error('❌ [SMTP VERIFICATION FAILED] Complete error details:');
     console.error(`   Error Message: ${error.message}`);
     console.error(`   Error Code: ${error.code || 'N/A'}`);
     console.error(`   Error Command: ${error.command || 'N/A'}`);
@@ -76,13 +144,9 @@ export const verifyEmailSetup = async () => {
 /**
  * Helper to compute valid From header matching authenticated SMTP user
  */
-const getFromAddress = (defaultLabel) => {
-  const user = process.env.EMAIL_USER || process.env.SMTP_USER;
-  const rawFrom = process.env.EMAIL_FROM;
-
-  if (!user) {
-    return rawFrom || `"${defaultLabel}" <admissions@aiet.org.in>`;
-  }
+const getFromAddress = (defaultLabel, config) => {
+  const user = config.user;
+  const rawFrom = config.from;
 
   if (rawFrom) {
     if (rawFrom.includes(`<${user}>`)) {
@@ -115,7 +179,6 @@ export const sendStudentConfirmationEmail = async (data) => {
   } = data;
 
   const subject = 'AIET Admission Application Received';
-  const fromEmail = getFromAddress('AIET Admissions');
 
   const htmlContent = `
 <!DOCTYPE html>
@@ -391,29 +454,68 @@ Admissions Office
 Alva's Institute of Engineering & Technology
   `.trim();
 
+  const config = getSmtpConfig();
+  const fromEmail = getFromAddress('AIET Admissions', config);
+
+  // Step 4: Log before sendMail()
+  console.log('📧 Sending Student Email...');
+  console.log(`   Recipient: ${email}`);
+  console.log(`   Application ID: ${tokenNumber || 'N/A'}`);
+  console.log(`   Admission Mode: ${mode || 'N/A'}`);
+
   try {
-    const transporter = getTransporter();
-    console.log(`📧 [STUDENT EMAIL SENDING] Sending student email to: ${email}`);
-    
-    const info = await transporter.sendMail({
-      from: fromEmail,
-      to: email,
-      subject,
-      text: textContent,
-      html: htmlContent,
-    });
-    
-    console.log(`✅ [STUDENT EMAIL SENT] Confirmation email sent to ${email}. Message ID: ${info.messageId}`);
+    let transporter = cachedTransporter;
+    if (!transporter) {
+      transporter = getTransporter();
+    }
+
+    let info;
+    try {
+      info = await transporter.sendMail({
+        from: fromEmail,
+        to: email,
+        subject,
+        text: textContent,
+        html: htmlContent,
+      });
+    } catch (sendErr) {
+      // Step 9: Retry with fallback port 587 if port 465 fails due to network/firewall blocks
+      if (config.port === 465) {
+        console.warn(`⚠️ [STUDENT EMAIL RETRY] Primary send failed (${sendErr.message}). Retrying via port 587 (STARTTLS)...`);
+        const fallbackTrans = getTransporter(587);
+        info = await fallbackTrans.sendMail({
+          from: fromEmail,
+          to: email,
+          subject,
+          text: textContent,
+          html: htmlContent,
+        });
+        cachedTransporter = fallbackTrans;
+      } else {
+        throw sendErr;
+      }
+    }
+
+    // Step 5: Log after sendMail()
+    console.log('✅ [STUDENT EMAIL SENT SUCCESS]');
+    console.log(`   Message ID: ${info.messageId}`);
+    console.log(`   Accepted: ${JSON.stringify(info.accepted)}`);
+    console.log(`   Rejected: ${JSON.stringify(info.rejected)}`);
+    console.log(`   Envelope: ${JSON.stringify(info.envelope)}`);
+    console.log(`   Response: ${info.response}`);
+
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error(`❌ [STUDENT EMAIL FAILED] Error sending email to ${email}:`);
+    // Step 6 & Step 10: Complete error logging without swallowing exceptions
+    console.error('❌ [STUDENT EMAIL FAILED] Complete error details:');
     console.error(`   Error Message: ${err.message}`);
     console.error(`   Error Code: ${err.code || 'N/A'}`);
     console.error(`   Error Command: ${err.command || 'N/A'}`);
     console.error(`   Error Response: ${err.response || 'N/A'}`);
     console.error(`   Error ResponseCode: ${err.responseCode || 'N/A'}`);
     console.error('   Stack Trace:\n', err.stack);
-    return { success: false, error: err.message };
+
+    return { success: false, error: err.message, code: err.code };
   }
 };
 
@@ -438,17 +540,13 @@ export const sendAdminNotificationEmail = async (data) => {
     browser, // Browser / User-Agent
   } = data;
 
-  const adminEmail = process.env.ADMIN_EMAIL || 'admissions@aiet.org.in';
-  const subject = 'New Admission Application Received';
-  const fromEmail = getFromAddress('AIET Portal');
-
   const htmlContent = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${subject}</title>
+  <title>New Admission Application Received</title>
   <style>
     body {
       font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -584,7 +682,7 @@ export const sendAdminNotificationEmail = async (data) => {
       </table>
     </div>
     <div class="admin-footer">
-      AIET Automated System Notification &bull; Target: ${adminEmail}
+      AIET Automated System Notification
     </div>
   </div>
 </body>
@@ -606,28 +704,65 @@ IP Address: ${ipAddress}
 Browser: ${browser}
   `.trim();
 
+  const config = getSmtpConfig();
+  const adminEmail = config.adminEmail;
+  const fromEmail = getFromAddress('AIET Portal', config);
+
+  // Step 4: Log before sendMail()
+  console.log('📧 Sending Admin Email...');
+  console.log(`   Recipient: ${adminEmail}`);
+
   try {
-    const transporter = getTransporter();
-    console.log(`📧 [ADMIN EMAIL SENDING] Sending admin email to: ${adminEmail}`);
+    let transporter = cachedTransporter;
+    if (!transporter) {
+      transporter = getTransporter();
+    }
 
-    const info = await transporter.sendMail({
-      from: fromEmail,
-      to: adminEmail,
-      subject,
-      text: textContent,
-      html: htmlContent,
-    });
+    let info;
+    try {
+      info = await transporter.sendMail({
+        from: fromEmail,
+        to: adminEmail,
+        subject: 'New Admission Application Received',
+        text: textContent,
+        html: htmlContent,
+      });
+    } catch (sendErr) {
+      if (config.port === 465) {
+        console.warn(`⚠️ [ADMIN EMAIL RETRY] Primary send failed (${sendErr.message}). Retrying via port 587 (STARTTLS)...`);
+        const fallbackTrans = getTransporter(587);
+        info = await fallbackTrans.sendMail({
+          from: fromEmail,
+          to: adminEmail,
+          subject: 'New Admission Application Received',
+          text: textContent,
+          html: htmlContent,
+        });
+        cachedTransporter = fallbackTrans;
+      } else {
+        throw sendErr;
+      }
+    }
 
-    console.log(`✅ [ADMIN EMAIL SENT] Notification email sent to ${adminEmail}. Message ID: ${info.messageId}`);
+    // Step 5: Log after sendMail()
+    console.log('✅ [ADMIN EMAIL SENT SUCCESS]');
+    console.log(`   Message ID: ${info.messageId}`);
+    console.log(`   Accepted: ${JSON.stringify(info.accepted)}`);
+    console.log(`   Rejected: ${JSON.stringify(info.rejected)}`);
+    console.log(`   Envelope: ${JSON.stringify(info.envelope)}`);
+    console.log(`   Response: ${info.response}`);
+
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error(`❌ [ADMIN EMAIL FAILED] Error sending email to ${adminEmail}:`);
+    // Step 6 & Step 10: Complete error logging
+    console.error('❌ [ADMIN EMAIL FAILED] Complete error details:');
     console.error(`   Error Message: ${err.message}`);
     console.error(`   Error Code: ${err.code || 'N/A'}`);
     console.error(`   Error Command: ${err.command || 'N/A'}`);
     console.error(`   Error Response: ${err.response || 'N/A'}`);
     console.error(`   Error ResponseCode: ${err.responseCode || 'N/A'}`);
     console.error('   Stack Trace:\n', err.stack);
-    return { success: false, error: err.message };
+
+    return { success: false, error: err.message, code: err.code };
   }
 };

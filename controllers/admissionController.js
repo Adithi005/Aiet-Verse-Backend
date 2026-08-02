@@ -74,8 +74,14 @@ export const createAdmission = async (req, res, next) => {
     const tokenNumber = `AIET-${year}-${category}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const now = new Date();
-    const admissionDate = now.toISOString().split('T')[0];
-    const admissionTime = now.toTimeString().split(' ')[0];
+    const admissionDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
+    const admissionTime = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(now);
     const formattedTime = `${admissionDate} ${admissionTime}`;
 
     // Capture IP Address & User Agent Browser
@@ -143,37 +149,33 @@ export const createAdmission = async (req, res, next) => {
       browser: admission.browser,
     };
 
+    // Dispatch Student Confirmation Email & Admin Notification Email
     Promise.allSettled([
       sendStudentConfirmationEmail(emailData),
       sendAdminNotificationEmail(emailData),
     ]).then((results) => {
-      if (results[0].status === 'fulfilled') {
+      const studentRes = results[0];
+      const adminRes = results[1];
+
+      if (studentRes.status === 'fulfilled' && studentRes.value?.success) {
         console.log('✅ [STUDENT EMAIL SUCCESS] Student confirmation email processed.');
-        res.status(201).json({
-          success: true,
-          message: 'Seat booking request saved successfully.',
-          emaildata : emailData,
-        })
       } else {
-        console.error('❌ [STUDENT EMAIL ERROR]:', results[0].reason);
-        res.status(201).json({
-          success: false,
-          message: 'Seat booking request saved successfully but email not sent.',
-          emaildata : emailData,
-        })
+        const errVal = studentRes.status === 'rejected' ? studentRes.reason : studentRes.value?.error;
+        console.error('❌ [STUDENT EMAIL ERROR LOG]:', errVal);
       }
 
-      if (results[1].status === 'fulfilled') {
+      if (adminRes.status === 'fulfilled' && adminRes.value?.success) {
         console.log('✅ [ADMIN EMAIL SUCCESS] Admin notification email processed.');
       } else {
-        console.error('❌ [ADMIN EMAIL ERROR]:', results[1].reason);
+        const errVal = adminRes.status === 'rejected' ? adminRes.reason : adminRes.value?.error;
+        console.error('❌ [ADMIN EMAIL ERROR LOG]:', errVal);
       }
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: 'Seat booking request saved successfully.',
-      emaildata : emailData,
+      emaildata: emailData,
       data: {
         id: admission._id,
         tokenNumber: admission.tokenNumber,

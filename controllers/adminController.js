@@ -16,44 +16,97 @@ const generateToken = (id) => {
 };
 
 /**
- * Helper to build Date range filter for local server date
+ * IST Timezone Helpers (+05:30)
+ */
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // 19,800,000 ms
+
+const getISTComponents = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour12: false,
+  }).formatToParts(date);
+
+  let year, month, day;
+  for (const part of parts) {
+    if (part.type === 'year') year = parseInt(part.value, 10);
+    if (part.type === 'month') month = parseInt(part.value, 10) - 1;
+    if (part.type === 'day') day = parseInt(part.value, 10);
+  }
+  return { year, month, day };
+};
+
+const makeISTDate = (year, month, day, hours = 0, minutes = 0, seconds = 0, ms = 0) => {
+  return new Date(Date.UTC(year, month, day, hours, minutes, seconds, ms) - IST_OFFSET_MS);
+};
+
+const getISTDateString = (date = new Date()) => {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date);
+};
+
+const getISTTimeString = (date = new Date()) => {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date);
+};
+
+/**
+ * Helper to build Date range filter for Asia/Kolkata (IST) local timezone
  */
 const buildDateFilterCriteria = (dateFilter, startDate, endDate) => {
   const now = new Date();
-  
+  const todayComp = getISTComponents(now);
+  const todayUTC = new Date(Date.UTC(todayComp.year, todayComp.month, todayComp.day));
+
   if (dateFilter === 'today') {
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date(now);
-    endOfToday.setHours(23, 59, 59, 999);
+    const startOfToday = makeISTDate(todayComp.year, todayComp.month, todayComp.day, 0, 0, 0, 0);
+    const endOfToday = makeISTDate(todayComp.year, todayComp.month, todayComp.day, 23, 59, 59, 999);
     return { $gte: startOfToday, $lte: endOfToday };
   } else if (dateFilter === 'yesterday') {
-    const startOfYesterday = new Date(now);
-    startOfYesterday.setDate(now.getDate() - 1);
-    startOfYesterday.setHours(0, 0, 0, 0);
-    const endOfYesterday = new Date(now);
-    endOfYesterday.setDate(now.getDate() - 1);
-    endOfYesterday.setHours(23, 59, 59, 999);
+    const yesterdayUTC = new Date(todayUTC.getTime() - 24 * 60 * 60 * 1000);
+    const yYear = yesterdayUTC.getUTCFullYear();
+    const yMonth = yesterdayUTC.getUTCMonth();
+    const yDay = yesterdayUTC.getUTCDate();
+
+    const startOfYesterday = makeISTDate(yYear, yMonth, yDay, 0, 0, 0, 0);
+    const endOfYesterday = makeISTDate(yYear, yMonth, yDay, 23, 59, 59, 999);
     return { $gte: startOfYesterday, $lte: endOfYesterday };
   } else if (dateFilter === 'last7days') {
-    const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(now.getDate() - 7);
-    sevenDaysAgo.setHours(0, 0, 0, 0);
-    return { $gte: sevenDaysAgo };
+    const sixDaysAgoUTC = new Date(todayUTC.getTime() - 6 * 24 * 60 * 60 * 1000);
+    const sYear = sixDaysAgoUTC.getUTCFullYear();
+    const sMonth = sixDaysAgoUTC.getUTCMonth();
+    const sDay = sixDaysAgoUTC.getUTCDate();
+
+    const startOfLast7Days = makeISTDate(sYear, sMonth, sDay, 0, 0, 0, 0);
+    const endOfToday = makeISTDate(todayComp.year, todayComp.month, todayComp.day, 23, 59, 59, 999);
+    return { $gte: startOfLast7Days, $lte: endOfToday };
   } else if (dateFilter === 'last30days') {
-    const thirtyDaysAgo = new Date(now);
-    thirtyDaysAgo.setDate(now.getDate() - 30);
-    thirtyDaysAgo.setHours(0, 0, 0, 0);
-    return { $gte: thirtyDaysAgo };
+    const twentyNineDaysAgoUTC = new Date(todayUTC.getTime() - 29 * 24 * 60 * 60 * 1000);
+    const tYear = twentyNineDaysAgoUTC.getUTCFullYear();
+    const tMonth = twentyNineDaysAgoUTC.getUTCMonth();
+    const tDay = twentyNineDaysAgoUTC.getUTCDate();
+
+    const startOfLast30Days = makeISTDate(tYear, tMonth, tDay, 0, 0, 0, 0);
+    const endOfToday = makeISTDate(todayComp.year, todayComp.month, todayComp.day, 23, 59, 59, 999);
+    return { $gte: startOfLast30Days, $lte: endOfToday };
   } else if (dateFilter === 'custom' && (startDate || endDate)) {
     const criteria = {};
     if (startDate) {
-      criteria.$gte = new Date(startDate);
+      const [sY, sM, sD] = startDate.split('-').map(Number);
+      criteria.$gte = makeISTDate(sY, sM - 1, sD, 0, 0, 0, 0);
     }
     if (endDate) {
-      const eDate = new Date(endDate);
-      eDate.setHours(23, 59, 59, 999);
-      criteria.$lte = eDate;
+      const [eY, eM, eD] = endDate.split('-').map(Number);
+      criteria.$lte = makeISTDate(eY, eM - 1, eD, 23, 59, 59, 999);
+    } else if (startDate) {
+      const [sY, sM, sD] = startDate.split('-').map(Number);
+      criteria.$lte = makeISTDate(sY, sM - 1, sD, 23, 59, 59, 999);
     }
     return criteria;
   }
@@ -85,7 +138,8 @@ const fetchUnifiedRecords = async (dateFilter, startDate, endDate, searchStr) =>
       course: item.course || '',
       department: item.department || 'Engineering & Technology',
       desk: item.desk || '',
-      appointmentDate: item.admissionDate || (item.createdAt ? new Date(item.createdAt).toISOString().split('T')[0] : ''),
+      appointmentDate: item.admissionDate || (item.createdAt ? getISTDateString(new Date(item.createdAt)) : ''),
+      admissionTime: item.admissionTime || (item.createdAt ? getISTTimeString(new Date(item.createdAt)) : ''),
       appointmentType: item.appointmentType || 'Online Seat Booking',
       category: isPG ? 'PG' : 'UG',
       status: item.status || 'Pending',
@@ -106,7 +160,8 @@ const fetchUnifiedRecords = async (dateFilter, startDate, endDate, searchStr) =>
       course: item.course || (isPG ? 'MBA' : 'CSE'),
       department: 'Engineering & Technology',
       desk: item.desk || '',
-      appointmentDate: item.date || (item.createdAt ? new Date(item.createdAt).toISOString().split('T')[0] : ''),
+      appointmentDate: item.date || (item.createdAt ? getISTDateString(new Date(item.createdAt)) : ''),
+      admissionTime: item.createdAt ? getISTTimeString(new Date(item.createdAt)) : '',
       appointmentType: item.type === 'online' ? 'Online Video Counselling' : 'Offline Campus Counselling',
       category: isPG ? 'PG' : 'UG',
       status: 'Pending',
@@ -216,10 +271,9 @@ export const getDashboardStats = async (req, res, next) => {
     const allRecords = await fetchUnifiedRecords(null, null, null, null);
 
     const now = new Date();
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date(now);
-    endOfToday.setHours(23, 59, 59, 999);
+    const todayComp = getISTComponents(now);
+    const startOfToday = makeISTDate(todayComp.year, todayComp.month, todayComp.day, 0, 0, 0, 0);
+    const endOfToday = makeISTDate(todayComp.year, todayComp.month, todayComp.day, 23, 59, 59, 999);
 
     const todayRecords = allRecords.filter(r => {
       const d = new Date(r.createdAt);
@@ -239,13 +293,16 @@ export const getDashboardStats = async (req, res, next) => {
 
     // Daily breakdown for last 7 days chart
     const dailyChartData = [];
+    const todayUTC = new Date(Date.UTC(todayComp.year, todayComp.month, todayComp.day));
+
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      const dStart = new Date(d);
-      dStart.setHours(0, 0, 0, 0);
-      const dEnd = new Date(d);
-      dEnd.setHours(23, 59, 59, 999);
+      const dUTC = new Date(todayUTC.getTime() - i * 24 * 60 * 60 * 1000);
+      const year = dUTC.getUTCFullYear();
+      const month = dUTC.getUTCMonth();
+      const day = dUTC.getUTCDate();
+
+      const dStart = makeISTDate(year, month, day, 0, 0, 0, 0);
+      const dEnd = makeISTDate(year, month, day, 23, 59, 59, 999);
 
       const dayRecords = allRecords.filter(r => {
         const rDate = new Date(r.createdAt);
@@ -255,8 +312,9 @@ export const getDashboardStats = async (req, res, next) => {
       const ug = dayRecords.filter(r => r.category === 'UG').length;
       const pg = dayRecords.filter(r => r.category === 'PG').length;
 
+      const sampleDate = makeISTDate(year, month, day, 12, 0, 0, 0);
       dailyChartData.push({
-        dayLabel: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+        dayLabel: sampleDate.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short', month: 'short', day: 'numeric' }),
         ug,
         pg,
         total: ug + pg,

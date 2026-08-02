@@ -144,16 +144,21 @@ export const scheduleAppointment = async (req, res, next) => {
       sendStudentConfirmationEmail(emailData),
       sendAdminNotificationEmail(emailData),
     ]).then((results) => {
-      if (results[0].status === 'fulfilled') {
+      const studentRes = results[0];
+      const adminRes = results[1];
+
+      if (studentRes.status === 'fulfilled' && studentRes.value?.success) {
         console.log('✅ [STUDENT EMAIL SUCCESS] Student confirmation email processed.');
       } else {
-        console.error('❌ [STUDENT EMAIL ERROR]:', results[0].reason);
+        const errVal = studentRes.status === 'rejected' ? studentRes.reason : studentRes.value?.error;
+        console.error('❌ [STUDENT EMAIL ERROR LOG]:', errVal);
       }
 
-      if (results[1].status === 'fulfilled') {
+      if (adminRes.status === 'fulfilled' && adminRes.value?.success) {
         console.log('✅ [ADMIN EMAIL SUCCESS] Admin notification email processed.');
       } else {
-        console.error('❌ [ADMIN EMAIL ERROR]:', results[1].reason);
+        const errVal = adminRes.status === 'rejected' ? adminRes.reason : adminRes.value?.error;
+        console.error('❌ [ADMIN EMAIL ERROR LOG]:', errVal);
       }
     });
 
