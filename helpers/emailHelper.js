@@ -458,8 +458,9 @@ Alva's Institute of Engineering & Technology
   const fromEmail = getFromAddress('AIET Admissions', config);
 
   // Step 4: Log before sendMail()
-  console.log('📧 Sending Student Email...');
+  console.log(`📧 Sending Student Confirmation Email to: ${email}`);
   console.log(`   Recipient: ${email}`);
+  console.log(`   Subject: ${subject}`);
   console.log(`   Application ID: ${tokenNumber || 'N/A'}`);
   console.log(`   Admission Mode: ${mode || 'N/A'}`);
 
@@ -711,6 +712,8 @@ Browser: ${browser}
   // Step 4: Log before sendMail()
   console.log('📧 Sending Admin Email...');
   console.log(`   Recipient: ${adminEmail}`);
+  console.log(`   Subject: New Admission Application Received`);
+  console.log(`   Application ID: ${tokenNumber || 'N/A'}`);
 
   try {
     let transporter = cachedTransporter;

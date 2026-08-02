@@ -30,6 +30,7 @@ connectDB().then(() => {
 });
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Security and Optimization Middlewares
 app.use(helmet());
