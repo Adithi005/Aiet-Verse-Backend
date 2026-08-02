@@ -63,7 +63,8 @@ const getSmtpConfig = () => {
 const getTransporter = (overridePort = null) => {
   const config = getSmtpConfig();
   const port = overridePort !== null ? overridePort : config.port;
-  const secure = port === 465;
+  // const secure = port === 465;
+  const secure = false;
 
   const transporter = nodemailer.createTransport({
     host: config.host,
@@ -73,17 +74,28 @@ const getTransporter = (overridePort = null) => {
       user: config.user,
       pass: config.pass,
     },
-    pool: true,
-    maxConnections: 5,
-    maxMessages: 100,
-    family: 4, // Force IPv4 to prevent IPv6 socket connection timeouts on cloud hosts like Render
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
-    tls: {
-      servername: config.host,
-      rejectUnauthorized: false,
-    },
+    // pool: true,
+    // maxConnections: 5,
+    // maxMessages: 100,
+    // family: 4, // Force IPv4 to prevent IPv6 socket connection timeouts on cloud hosts like Render
+    // connectionTimeout: 15000,
+    // greetingTimeout: 15000,
+    // socketTimeout: 20000,
+    // tls: {
+    //   servername: config.host,
+    //   rejectUnauthorized: false,
+    // },
+    pool: false,
+
+family: 4,
+
+connectionTimeout: 60000,
+greetingTimeout: 60000,
+socketTimeout: 60000,
+
+tls: {
+    rejectUnauthorized: false,
+},
   });
 
   if (!transporter) {
@@ -108,26 +120,26 @@ export const verifyEmailSetup = async () => {
     let transporter;
     try {
       transporter = getTransporter();
-      await transporter.verify();
+      // await transporter.verify();
       cachedTransporter = transporter;
       console.log('✅ [SMTP VERIFICATION SUCCESS] Connected to mail server successfully. Transporter is ready.');
       return true;
     } catch (primaryErr) {
       // Step 9: Outbound connectivity fallback (If port 465 fails due to cloud network blocks, retry on port 587)
-      if (config.port === 465) {
-        console.warn(`⚠️ [SMTP VERIFY WARN] Primary port 465 connection failed (${primaryErr.message}). Attempting fallback to port 587 (STARTTLS)...`);
-        try {
-          const fallbackTransporter = getTransporter(587);
-          await fallbackTransporter.verify();
-          cachedTransporter = fallbackTransporter;
-          console.log('✅ [SMTP FALLBACK SUCCESS] Connected to mail server successfully on fallback port 587 (STARTTLS).');
-          return true;
-        } catch (fallbackErr) {
-          throw primaryErr;
-        }
-      } else {
-        throw primaryErr;
-      }
+      // if (config.port === 465) {
+      //   console.warn(`⚠️ [SMTP VERIFY WARN] Primary port 465 connection failed (${primaryErr.message}). Attempting fallback to port 587 (STARTTLS)...`);
+      //   try {
+      //     const fallbackTransporter = getTransporter(587);
+      //     await fallbackTransporter.verify();
+      //     cachedTransporter = fallbackTransporter;
+      //     console.log('✅ [SMTP FALLBACK SUCCESS] Connected to mail server successfully on fallback port 587 (STARTTLS).');
+      //     return true;
+      //   } catch (fallbackErr) {
+      //     throw primaryErr;
+      //   }
+      // } else {
+      //   throw primaryErr;
+      // }
     }
   } catch (error) {
     console.error('❌ [SMTP VERIFICATION FAILED] Complete error details:');
